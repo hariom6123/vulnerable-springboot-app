@@ -1,0 +1,116 @@
+name: Build & Security
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (Maven)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Build & test (skip tests on this intentionally insecure lab)
+        run: mvn -B -ntp -DskipTests package
+
+      - name: Upload JAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-jar
+          path: target/*.jar
+          if-no-files-found: ignore
+          retention-days: 7
+
+  security:
+    name: Security
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      # ---- Static SAST: dependency CVEs via OWASP Dependency-Check ----
+      # Fail the job when CVSS >= 7 (High/Critical). Lower the threshold via
+      # `-DfailBuildOnAnyVulnerability=false` to report-only.
+      - name: OWASP Dependency-Check (CVEs)
+        run: |
+          mvn -B -ntp \
+            org.owasp:dependency-check-maven:9.0.9:check \
+            -DfailBuildOnAnyVulnerability=true \
+            -DassemblyAnalyzerEnabled=false \
+            -DarchiveAnalyzerEnabled=false \
+            -DfailOnCVSS=7
+        continue-on-error: false
+
+      - name: Upload Dependency-Check report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-check-report
+          path: |
+            target/dependency-check-report.html
+            target/dependency-check-report.json
+            target/dependency-check-report.xml
+          if-no-files-found: warn
+          retention-days: 30
+
+      # ---- Secret scanning on every push ----
+      - name: Gitleaks secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ---- Vulnerability-scanner agent (manual / opt-in) ----
+      # By default this is a no-op so the workflow works without Claude Code
+      # credentials. To enable it in CI:
+      #   1. Add a repository secret ANTHROPIC_API_KEY (or CLAUDE_CODE_OAUTH_TOKEN)
+      #   2. Re-run this job from the Actions UI after toggling the env var below
+      #         OR run it locally from a developer machine against the cloned repo.
+      # The agent is defined in .claude/agents/vulnerability-scanner.md and writes
+      # SECURITY_ASSESSMENT_REPORT.md at the repo root.
+      - name: Run vulnerability-scanner agent (Claude Code CLI)
+        if: env.RUN_CLAUDE_SCANNER == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          RUN_CLAUDE_SCANNER: 'false' # flip to 'true' to enable
+        run: |
+          if ! command -v claude >/dev/null 2>&1; then
+            echo "::error::Claude Code CLI not installed on runner."
+            echo "Install: https://docs.claude.com/en/docs/claude-code/installation"
+            exit 1
+          fi
+          claude \
+            --agent vulnerability-scanner \
+            --print \
+            --output-format text \
+            "Run a full security assessment of this repository using .claude/agents/vulnerability-scanner.md. Write SECURITY_ASSESSMENT_REPORT.md at the repo root."
+
+      - name: Upload vulnerability-scanner report
+        if: always() && hashFiles('SECURITY_ASSESSMENT_REPORT.md') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-assessment-report
+          path: SECURITY_ASSESSMENT_REPORT.md
+          retention-days: 90
