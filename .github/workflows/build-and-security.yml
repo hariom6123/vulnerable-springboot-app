@@ -8,12 +8,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
     name: Build (Maven)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -50,25 +52,19 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # ---- Vulnerability-scanner agent (manual / opt-in) ----
-      # By default this is a no-op so the workflow works without Claude Code
-      # credentials. To enable it in CI:
-      #   1. Add a repository secret ANTHROPIC_API_KEY (or CLAUDE_CODE_OAUTH_TOKEN)
-      #   2. Re-run this job from the Actions UI after toggling the env var below
-      #         OR run it locally from a developer machine against the cloned repo.
-      # The agent is defined in .claude/agents/vulnerability-scanner.md and writes
-      # SECURITY_ASSESSMENT_REPORT.md at the repo root.
-      - name: Run vulnerability-scanner agent (Claude Code CLI)
-        if: env.RUN_CLAUDE_SCANNER == 'true'
+      # ---- Vulnerability-scanner agent ----
+      # Runs the Claude Code CLI against .claude/agents/vulnerability-scanner.md
+      # and writes SECURITY_ASSESSMENT_REPORT.md at the repo root.
+      # Requires the ANTHROPIC_API_KEY repository secret to be configured.
+      - name: Install Claude Code CLI
+        run: |
+          curl -fsSL https://claude.ai/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Run vulnerability-scanner agent
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          RUN_CLAUDE_SCANNER: 'false' # flip to 'true' to enable
         run: |
-          if ! command -v claude >/dev/null 2>&1; then
-            echo "::error::Claude Code CLI not installed on runner."
-            echo "Install: https://docs.claude.com/en/docs/claude-code/installation"
-            exit 1
-          fi
           claude \
             --agent vulnerability-scanner \
             --print \
@@ -82,3 +78,18 @@ jobs:
           name: security-assessment-report
           path: SECURITY_ASSESSMENT_REPORT.md
           retention-days: 90
+
+      # Also publish the report back to the repo so it shows up on the main branch
+      # on the next push trigger (commit only if the file actually changed).
+      - name: Commit report back to branch
+        if: always() && hashFiles('SECURITY_ASSESSMENT_REPORT.md') != ''
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add SECURITY_ASSESSMENT_REPORT.md
+          if git diff --cached --quiet; then
+            echo "No changes to report."
+          else
+            git commit -m "chore(security): refresh SECURITY_ASSESSMENT_REPORT.md"
+            git push
+          fi
