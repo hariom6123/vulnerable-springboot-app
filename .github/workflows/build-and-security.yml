@@ -58,7 +58,7 @@ jobs:
       # Requires the ANTHROPIC_API_KEY repository secret to be configured.
       - name: Install Claude Code CLI
         run: |
-          curl -fsSL https://claude.ai/install.sh | sh
+          curl -fsSL https://claude.ai/install.sh | bash
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Run vulnerability-scanner agent
