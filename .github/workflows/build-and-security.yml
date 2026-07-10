@@ -142,8 +142,8 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
           curl -fsSL -u "${SONAR_TOKEN}:" \
-            "${{ env.SONAR_HOST_URL }}/api/measures/component?component=${{ env.SONAR_PROJECT_KEY }}&metricKeys=bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density,security_hotspots" \
-            -o sonar-report.json || true
+            "${{ env.SONAR_HOST_URL }}/project/issues?issueStatuses=OPEN&id=hariom6123_vulnerable-springboot-app" \
+            -o sonar-report.json || true 
 
           echo "SonarQube report saved to sonar-report.json"
           if [ -f sonar-report.json ]; then
