@@ -106,53 +106,34 @@ jobs:
             -Dsonar.java.binaries=target/classes
             -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
             -Dsonar.junit.reportPaths=target/surefire-reports
-
-      - name: Generate SonarQube issues report
-        if: always()
+      - name: Download SonarQube measures report
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
-          SONAR_PROJECT_KEY: ${{ env.SONAR_PROJECT_KEY }}
         run: |
-          if [ -n "$SONAR_TOKEN" ] && [ -n "$SONAR_HOST_URL" ] && [ -n "$SONAR_PROJECT_KEY" ]; then
-            echo "Fetching SonarQube issues for ${SONAR_PROJECT_KEY}"
-            curl -fsSL -u "${SONAR_TOKEN}:" \
-              "${SONAR_HOST_URL}/api/issues/search?projectKeys=${SONAR_PROJECT_KEY}&types=VULNERABILITY,CODE_SMELL,BUG,SECURITY_HOTSPOT&ps=500&p=1" \
-              -o sonarqube-report.json || \
-              echo '{"projectKey":"'"${SONAR_PROJECT_KEY}"'","summary":{"issues":0},"issues":[],"message":"SonarQube issues could not be fetched from the server."}' > sonarqube-report.json
-          else
-            echo '{"projectKey":"'"${SONAR_PROJECT_KEY}"'","summary":{"issues":0},"issues":[],"message":"SonarQube secrets are not configured."}' > sonarqube-report.json
-          fi
-          echo "Generated SonarQube report at sonarqube-report.json"
-          ls -l sonarqube-report.json
+          curl -fsSL -u "${SONAR_TOKEN}:" \
+            "${{ env.SONAR_HOST_URL }}/api/measures/component?component=${{ env.SONAR_PROJECT_KEY }}&metricKeys=bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density,security_hotspots" \
+            -o sonar-report.json || true
 
-      - name: Upload SonarQube report
-        if: always() && hashFiles('sonarqube-report.json') != ''
+          echo "SonarQube report saved to sonar-report.json"
+          if [ -f sonar-report.json ]; then
+            if [ -s sonar-report.json ]; then
+              cat sonar-report.json
+            else
+              echo "SonarQube report file is empty."
+            fi
+          else
+            echo "No SonarQube report was generated."
+          fi
+
+      - name: Upload SonarQube report artifact
+        if: always() && hashFiles('sonar-report.json') != ''
         uses: actions/upload-artifact@v4
         with:
-          name: sonarqube-report
-          path: |
-            sonarqube-report.json
-            target/site/jacoco/
+          name: sonar-report
+          path: sonar-report.json
           if-no-files-found: warn
           retention-days: 90
-
-      - name: Post SonarQube dashboard link to run summary
-        if: always() && env.SONAR_TOKEN != '' && env.SONAR_HOST_URL != ''
-        run: |
-          echo "## SonarQube Cloud analysis" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "View the Quality Gate result and findings on SonarCloud:" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "${SONAR_HOST_URL}/dashboard?id=vulnerable-spring-app" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Note: this is an intentionally vulnerable learning lab, so the Quality" >> "$GITHUB_STEP_SUMMARY"
-          echo "Gate is expected to fail. The job is marked continue-on-error so a" >> "$GITHUB_STEP_SUMMARY"
-          echo "failed Quality Gate does not fail the workflow." >> "$GITHUB_STEP_SUMMARY"
-      - name: Skip notice when Sonar secrets are missing
-        if: env.SONAR_TOKEN == '' || env.SONAR_HOST_URL == ''
-        run: |
-          echo "::warning::SonarQube scan skipped — configure SONAR_TOKEN, SONAR_HOST_URL, and SONAR_ORGANIZATION repository secrets to enable this job."
+    
   # ---------------------------------------------------------------
   # 4. TRIVY FILESYSTEM SCAN
   # ---------------------------------------------------------------
