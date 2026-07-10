@@ -25,7 +25,10 @@ permissions:
 
 # Shared env (e.g. SONAR_HOST_URL) is read by jobs that need it.
 env:
-  SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+  SONAR_HOST_URL: https://sonarcloud.io
+  SONAR_PROJECT_KEY: hariom6123_vulnerable-springboot-app
+  SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
+  
 
 jobs:
   # ---------------------------------------------------------------
@@ -86,7 +89,7 @@ jobs:
         if: always()
         run: mvn -B -ntp -Pcoverage verify
 
-      - name: SonarQube scan
+      - name: SonarCloud Analysis
         continue-on-error: true
         uses: sonarsource/sonarqube-scan-action@v3
         env:
@@ -94,14 +97,13 @@ jobs:
         with:
           projectBaseDir: .
           args: >
-            -Dsonar.projectKey=vulnerable-spring-app
-            -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }}
+            -Dsonar.projectKey=${{ env.SONAR_PROJECT_KEY }}
+            -Dsonar.organization=${{ env.SONAR_ORGANIZATION }}
             -Dsonar.host.url=${{ env.SONAR_HOST_URL }}
-            -Dsonar.token=${{ secrets.SONAR_TOKEN }}
+            -Dsonar.token=${SONAR_TOKEN}
             -Dsonar.sources=src/main/java
             -Dsonar.tests=src/test/java
             -Dsonar.java.binaries=target/classes
-            -Dsonar.java.coveragePlugin=jacoco
             -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
             -Dsonar.junit.reportPaths=target/surefire-reports
 
