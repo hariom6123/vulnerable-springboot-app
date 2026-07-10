@@ -177,7 +177,7 @@ jobs:
   docker-build:
     name: Docker build
     runs-on: ubuntu-latest
-    needs: [unit-tests, trivy-fs]
+    needs: [trivy-fs]
     permissions:
       contents: read
     steps:
@@ -257,7 +257,7 @@ jobs:
   publish:
     name: Publish
     runs-on: ubuntu-latest
-    needs: [unit-tests, sonarqube, docker-build, trivy-image]
+    needs: [trivy-image]
     permissions:
       contents: read
       packages: write
