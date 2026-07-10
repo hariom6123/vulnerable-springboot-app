@@ -147,7 +147,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run Trivy filesystem scan (SARIF)
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@0.35.0
         with:
           scan-type: 'fs'
           scan-ref: '.'
@@ -228,7 +228,7 @@ jobs:
       security-events: write
     steps:
       - name: Run Trivy image scan (SARIF)
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: 'vulnerable-spring-app:ci'
           format: 'sarif'
