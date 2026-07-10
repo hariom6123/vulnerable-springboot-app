@@ -177,8 +177,8 @@ jobs:
   # 4. DOCKER IMAGE BUILD
   # ---------------------------------------------------------------
   # Builds the multi-stage Dockerfile and loads the image into the
-  # runner's local Docker daemon. The image is not pushed here — the
-  # publish job below handles the ghcr.io push after Trivy has scanned it.
+  # runner's local Docker daemon. The image is saved and uploaded as an
+  # artifact so the trivy-image job can load it.
   docker-build:
     name: Docker build
     runs-on: ubuntu-latest
@@ -214,10 +214,21 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
 
+      - name: Save Docker image
+        run: docker save vulnerable-spring-app:ci | gzip > image.tar.gz
+
+      - name: Upload Docker image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: image.tar.gz
+          retention-days: 1
+
   # ---------------------------------------------------------------
   # 5. TRIVY IMAGE SCAN
   # ---------------------------------------------------------------
-  # Scans the locally-built image for OS- and library-level CVEs.
+  # Downloads the Docker image from the artifact, loads it into the
+  # local daemon, and scans it for OS- and library-level CVEs.
   # Findings are SARIF-uploaded to the Security tab.
   trivy-image:
     name: Trivy image scan
@@ -227,6 +238,14 @@ jobs:
       contents: read
       security-events: write
     steps:
+      - name: Download Docker image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+
+      - name: Load Docker image
+        run: gunzip -c image.tar.gz | docker load
+
       - name: Run Trivy image scan (SARIF)
         uses: aquasecurity/trivy-action@0.35.0
         with:
