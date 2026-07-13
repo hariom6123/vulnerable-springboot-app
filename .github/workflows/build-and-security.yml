@@ -121,12 +121,14 @@ jobs:
         run: mvn -B -ntp -Pcoverage verify
 
       - name: Verify Sonar configuration
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
           echo "Project: ${{ env.SONAR_PROJECT_KEY }}"
           echo "Organization: ${{ env.SONAR_ORGANIZATION }}"
           echo "Host: ${{ env.SONAR_HOST_URL }}"
 
-          if [ -z "${{ secrets.SONAR_TOKEN }}" ]; then
+          if [ -z "$SONAR_TOKEN" ]; then
             echo "SONAR_TOKEN is EMPTY"
             exit 1
           else
@@ -141,7 +143,6 @@ jobs:
           -Dsonar.projectKey=${{ env.SONAR_PROJECT_KEY }} \
           -Dsonar.organization=${{ env.SONAR_ORGANIZATION }} \
           -Dsonar.host.url=${{ env.SONAR_HOST_URL }} \
-          -Dsonar.token=${SONAR_TOKEN} \
           -Dsonar.qualitygate.wait=true
 
 
