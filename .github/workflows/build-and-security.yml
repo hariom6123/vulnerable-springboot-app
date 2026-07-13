@@ -130,10 +130,7 @@ jobs:
           -Dsonar.host.url=${{ env.SONAR_HOST_URL }} \
           -Dsonar.token=${SONAR_TOKEN} \
           -Dsonar.sources=src/main/java \
-          -Dsonar.tests=src/test/java \
-          -Dsonar.java.binaries=target/classes \
-          -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
-          -Dsonar.junit.reportPaths=target/surefire-reports
+
 
       - name: Download SonarQube Reports
         if: always()
