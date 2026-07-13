@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 #
 # Invokes the Sonar Report Generator agent via the NVIDIA API.
-# Reads SonarQube JSON artifacts from ./reports/ and writes the
-# generated Markdown report to ./reports/sonar-report.md.
+#
+# Reads SonarQube JSON artifacts (issues.json, quality-gate.json,
+# measures.json, hotspots.json, project.json, report-metadata.json) from
+# ./reports/ and produces a single deterministic Markdown report at
+# ./reports/sonar-report.md.
 #
 # Required env:
 #   NVDAI_API_KEY      - NVIDIA API key
 # Optional env:
 #   NVDAI_MODEL        - model id (default: meta/llama-3.1-70b-instruct)
-#   NVDAI_MAX_TOKENS   - max tokens (default: 6000)
+#   NVDAI_MAX_TOKENS   - max tokens (default: 8000)
 #
 # This is a READ-ONLY agent. It does not modify any source code; it
 # only writes reports/sonar-report.md.
@@ -24,56 +27,232 @@ REPORTS_DIR="${REPORTS_DIR:-reports}"
 mkdir -p "$REPORTS_DIR"
 
 MODEL="${NVDAI_MODEL:-meta/llama-3.1-70b-instruct}"
-MAX_TOKENS="${NVDAI_MAX_TOKENS:-6000}"
+MAX_TOKENS="${NVDAI_MAX_TOKENS:-8000}"
 
-# Sanity: list the available inputs so the model knows what's there.
 echo "📂 SonarQube inputs under $REPORTS_DIR/:" >&2
 ls -la "$REPORTS_DIR" >&2 || true
 
+# --- Step 1: Normalize all SonarQube JSONs into a single inlined JSON.
+# The agent receives this inline so it can render the report
+# deterministically without needing tool access.
+echo "📦 Normalizing SonarQube JSON inputs..." >&2
+PARSER_STDERR_FILE="$(mktemp)"
+set +e
+NORMALIZED_JSON="$(node scripts/parse-sonar-report.mjs --root "$REPORTS_DIR" 2>"$PARSER_STDERR_FILE")"
+NODE_RC=$?
+set -e
+# Forward parser warnings to our own stderr.
+if [ -s "$PARSER_STDERR_FILE" ]; then
+  cat "$PARSER_STDERR_FILE" >&2
+fi
+rm -f "$PARSER_STDERR_FILE"
+if [ "$NODE_RC" -ne 0 ] || [ -z "$NORMALIZED_JSON" ] || [ "${NORMALIZED_JSON:0:1}" != "{" ]; then
+  echo "::warning::No SonarQube JSON inputs found under $REPORTS_DIR/. Agent will be invoked with an empty payload." >&2
+  NORMALIZED_JSON='{"metadata":null,"project":null,"qualityGate":null,"measures":{},"issues":[],"hotspots":[]}'
+fi
+# Cap the size to avoid blowing up the request payload (10KB per input, but the
+# normalized form is usually smaller — issues array can grow).
+NORMALIZED_JSON_LIMIT=60000
+if [ "${#NORMALIZED_JSON}" -gt "$NORMALIZED_JSON_LIMIT" ]; then
+  echo "::warning::Normalized JSON is ${#NORMALIZED_JSON} bytes; truncating to $NORMALIZED_JSON_LIMIT." >&2
+  NORMALIZED_JSON="${NORMALIZED_JSON:0:$NORMALIZED_JSON_LIMIT}"
+fi
+
+# --- Step 2: Build the system + user prompts.
 SYSTEM_PROMPT='You are the "Sonar Report Generator Agent", an expert DevSecOps Security Reporting Agent.
 
-Your responsibility is to generate a professional Markdown report from SonarCloud/SonarQube analysis results.
+Your responsibility is to convert SonarCloud/SonarQube analysis results (provided as a normalized JSON block in the user message) into a single deterministic Markdown report.
 
 ABSOLUTE RULES (non-negotiable):
 1. You DO NOT modify source code.
 2. You DO NOT fix vulnerabilities.
-3. You DO NOT make assumptions.
-4. You DO NOT invent data.
-5. You ONLY convert SonarCloud analysis into a Markdown report.
-6. You write exactly ONE file: reports/sonar-report.md
-7. If any input is missing, mark that section "Not Available" and continue.
-8. Numbers MUST exactly match SonarCloud. Never estimate. Never calculate manually.
-9. The report must be deterministic: sort all aggregates before emission.
+3. You DO NOT invent data. Every count, every issue, every metric must come from the JSON block.
+4. If a section has no data, render "Not Available" — do NOT terminate.
+5. Numbers MUST exactly match SonarCloud. Never estimate. Never calculate manually.
+6. The report must be deterministic. Sort all aggregates before emission:
+   - Issues within a severity bucket: ascending by (file, line)
+   - Files with highest issues: descending by count, then ascending by file path
+   - Rule frequency: descending by count, then ascending by rule
+   - OWASP categories: descending by count
+7. The report must start with the line "# SonarQube Security Analysis Report" and end with the report footer.
+8. Output ONLY the Markdown content. No preamble, no closing remarks, no code fences around the whole report.
 
-INPUTS (already on disk under reports/):
-- reports/sonar-report.json   (issues[] array — the most important input)
-- reports/quality-gate.json   (projectStatus.status and projectStatus.conditions[])
-- reports/measures.json       (component.measures[])
-- reports/hotspots.json       (hotspots[])
-- reports/project.json        (component.{key,name,organization,visibility,analysisDate})
-- reports/report-metadata.json ({project, repository, branch, commit, generated})
-
-OUTPUT FORMAT:
-Follow the EXACT report structure defined in the agent specification. Sections must appear in this order and only this order:
+OUTPUT FORMAT (exact section order, exact field names):
 
   # SonarQube Security Analysis Report
-  ## Executive Summary (Quality Gate + Overall Risk table)
-  ## Dashboard Summary (Bugs/Vulnerabilities/Code Smells/Security Hotspots/Coverage/Duplicated Code/Reliability Rating/Security Rating/Maintainability Rating)
-  ## Severity Summary (Blocker/Critical/Major/Minor/Info)
-  ## Detailed Findings (group by severity: BLOCKER, CRITICAL, MAJOR, MINOR, INFO; sort within each by file then line ascending)
+
+  Header table:
+    | Field | Value |
+    | --- | --- |
+    | Project Name | <project.name or "Not Available"> |
+    | Repository   | <metadata.repository or "Not Available"> |
+    | Branch       | <metadata.branch or "Not Available"> |
+    | Commit ID    | <metadata.commit or "Not Available"> |
+    | Analysis Date| <project.analysisDate or "Not Available"> |
+    | Sonar Version| "Not Available" |
+
+  ---
+
+  ## Executive Summary
+
+  | Item | Value |
+  | --- | --- |
+  | Quality Gate | <qualityGate.status: PASS / FAIL / NONE> |
+
+  ### Overall Risk
+
+  | Severity | Count |
+  | --- | ---:|
+  | Critical | <count of issues with severity "CRITICAL"> |
+  | High     | <count of issues with severity "MAJOR" — Sonar maps MAJOR to "High" risk> |
+  | Medium   | <count of issues with severity "MINOR" — Sonar maps MINOR to "Medium" risk> |
+  | Low      | <count of issues with severity "INFO">   |
+
+  **Total Issues:** <sum of the four counts above>
+
+  ---
+
+  ## Dashboard Summary
+
+  | Metric | Count |
+  | --- | ---:|
+  | Bugs | <measures.bugs or "Not Available"> |
+  | Vulnerabilities | <measures.vulnerabilities or "Not Available"> |
+  | Code Smells | <measures.code_smells or "Not Available"> |
+  | Security Hotspots | <hotspots.length or measures.security_hotspots or "Not Available"> |
+  | Coverage | <measures.coverage + "%" or "Not Available"> |
+  | Duplicated Code | <measures.duplicated_lines_density + "%" or "Not Available"> |
+  | Reliability Rating | <measures.reliability_rating or "Not Available"> |
+  | Security Rating | <measures.security_rating or "Not Available"> |
+  | Maintainability Rating | <measures.sqale_rating or "Not Available"> |
+
+  ---
+
+  ## Severity Summary
+
+  | Severity | Count |
+  | --- | ---:|
+  | ⚪ BLOCKER | <count> |
+  | 🔴 CRITICAL | <count> |
+  | 🟠 MAJOR | <count> |
+  | 🟡 MINOR | <count> |
+  | 🔵 INFO | <count> |
+
+  ---
+
+  ## Detailed Findings
+
+  Group by severity in this exact order: BLOCKER, CRITICAL, MAJOR, MINOR, INFO. Within each, sort ascending by (file, line). For each issue emit:
+
+  ### Finding #<n>
+
+  | Field | Value |
+  | --- | --- |
+  | Issue Number | <key> |
+  | Issue Type | <type: VULNERABILITY / BUG / CODE_SMELL / SECURITY_HOTSPOT> |
+  | Severity | <emoji + severity: e.g. 🔴 CRITICAL, 🟠 MAJOR, 🟡 MINOR, 🔵 INFO, ⚪ BLOCKER> |
+  | Rule ID | <rule> |
+  | Rule Name | <ruleName or "Not Available"> |
+  | File | <file> |
+  | Line Number | <line> |
+  | Component | <component> |
+  | Status | <status or "Not Available"> |
+  | Author | <author or "Not Available"> |
+  | Created Date | <creationDate or "Not Available"> |
+  | Updated Date | <updateDate or "Not Available"> |
+  | Technical Debt | <debt or "Not Available"> |
+  | Description | <message> |
+  | Recommended Fix | "Not Available" — never invent fixes |
+  | Tags | <comma-joined tags, or "Not Available"> |
+
+  ---
+
   ## Security Hotspots
+
+  For each hotspot emit:
+
+  ### Hotspot #<n>
+
+  | Field | Value |
+  | --- | --- |
+  | Key | <key> |
+  | Rule | <ruleKey> |
+  | File | <file> |
+  | Line | <line> |
+  | Probability | <probability: HIGH / MEDIUM / LOW> |
+  | Status | <status> |
+  | Author | <author or "Not Available"> |
+  | Created | <creationDate or "Not Available"> |
+  | Message | <message or "Not Available"> |
+
+  ---
+
   ## Bugs
+
+  Emit one bullet per issue with type == BUG, sorted ascending by (file, line):
+    - `<rule>` — `<message>` — `<file>:<line>`
+
   ## Vulnerabilities
+
+  Same shape for type == VULNERABILITY.
+
   ## Code Smells
-  ## Files With Highest Issues (sort descending by count, then ascending by file path)
-  ## Rule Frequency (sort descending by count, then ascending by rule)
-  ## OWASP Mapping (if any issue tags match ^owasp-)
-  ## AI Summary (max 10 bullets; never recommend fixes)
-  ## Report Footer (Generated By, Generated On — UTC ISO 8601 timestamp)
 
-Use proper Markdown tables. Use emojis only for severity indicators (🔴 CRITICAL, 🟠 MAJOR, 🟡 MINOR, 🔵 INFO, ⚪ BLOCKER).'
+  Same shape for type == CODE_SMELL.
 
-USER_PROMPT='Read every JSON file under ./reports/ and produce the SonarQube Security Analysis Report in EXACTLY the format specified. Output ONLY the Markdown content of the report — no preamble, no explanation, no code fences around the whole report. The first line MUST be the report title "# SonarQube Security Analysis Report".'
+  ---
+
+  ## Files With Highest Issues
+
+  Aggregate issue counts per file. Sort descending by count, then ascending by file path.
+
+  | File | Total Issues |
+  | --- | ---:|
+  | <file> | <count> |
+
+  ## Rule Frequency
+
+  Aggregate issue counts per rule. Sort descending by count, then ascending by rule.
+
+  | Rule | Count |
+  | --- | ---:|
+  | <rule> | <count> |
+
+  ## OWASP Mapping
+
+  For any issue tags matching `^owasp-`, aggregate counts. Sort descending by count.
+
+  | OWASP Category | Issues |
+  | --- | ---:|
+  | <tag> | <count> |
+
+  ---
+
+  ## AI Summary
+
+  Max 10 bullets. Include:
+  - Highest priority risks (file + rule)
+  - Files requiring immediate attention
+  - Critical vulnerability count
+  - Coverage observations
+  - Technical debt observations
+
+  Never recommend fixes. Only summarize. If a category has no data, omit that bullet.
+
+  ---
+
+  ## Report Footer
+
+  | Field | Value |
+  | --- | --- |
+  | Generated By | Sonar Report Generator Agent |
+  | Generated On | <UTC ISO 8601 timestamp, e.g. 2026-07-13T08:00:00Z>'
+
+USER_PROMPT='Render the SonarQube Security Analysis Report from the following normalized JSON. Follow the system prompt exactly. If a field is missing, write "Not Available". Do not invent data.
+
+\`\`\`json
+'"$NORMALIZED_JSON"'
+\`\`\`'
 
 # Write the two prompts to files so python can read them with no shell escaping.
 printf '%s' "$SYSTEM_PROMPT" > system-prompt.txt
@@ -96,7 +275,7 @@ with open("user-prompt.txt", "r", encoding="utf-8") as f:
     user_content = f.read()
 payload = {
     "model": os.environ.get("NVDAI_MODEL", "meta/llama-3.1-70b-instruct"),
-    "max_tokens": int(os.environ.get("NVDAI_MAX_TOKENS", "6000")),
+    "max_tokens": int(os.environ.get("NVDAI_MAX_TOKENS", "8000")),
     "messages": [
         {"role": "system", "content": system_content},
         {"role": "user",   "content": user_content},
