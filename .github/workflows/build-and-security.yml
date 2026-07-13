@@ -124,7 +124,7 @@ jobs:
       - name: Build and analyze
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: mvn -B verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar -Dsonar.projectKey=cknafsal-max_Java
+        run: mvn -B verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar -Dsonar.projectKey=hariom6123_vulnerable-springboot-app
 
       - name: Download SonarQube Issues
         if: always()
@@ -132,7 +132,7 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
           curl -s -u "$SONAR_TOKEN:" \
-            "https://sonarcloud.io/api/issues/search?componentKeys=cknafsal-max_Java&s=FILE_LINE&asc=false&resolved=false" \
+            "https://sonarcloud.io/api/issues/search?componentKeys=hariom6123_vulnerable-springboot-app&s=FILE_LINE&asc=false&resolved=false" \
             > sonar-issues.json
           
           echo "=== SonarQube Issues Found ==="
