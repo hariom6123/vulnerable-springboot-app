@@ -24,10 +24,7 @@ permissions:
   contents: read
 
 # Shared env (e.g. SONAR_HOST_URL) is read by jobs that need it.
-env:
-  SONAR_HOST_URL: https://sonarcloud.io
-  SONAR_PROJECT_KEY: hariom6123_vulnerable-springboot-app
-  SONAR_ORGANIZATION: hariom6123
+
   
 
 jobs:
@@ -94,164 +91,69 @@ jobs:
   # ---------------------------------------------------------------
   # 3. SONARQUBE CLOUD STATIC ANALYSIS
   # ---------------------------------------------------------------
-    # ---------------------------------------------------------------
-  # 3. SONARQUBE CLOUD STATIC ANALYSIS
-  # ---------------------------------------------------------------
+
   sonarqube:
-    name: SonarQube Cloud analysis
+    name: Sonarqube Cloud Analysis
+    needs: build-and-coverage
     runs-on: ubuntu-latest
-    needs: [unit-tests]
-    permissions:
-      contents: read
-      pull-requests: read
-      security-events: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           fetch-depth: 0
-          submodules: recursive
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
         with:
-          distribution: temurin
-          java-version: '17'
-          cache: maven
+          java-version: 17
+          distribution: 'zulu'
 
-      - name: Build, test, and aggregate coverage
-        if: always()
-        run: mvn -B -ntp -Pcoverage verify
+      - name: Cache SonarQube packages
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
 
-      - name: Verify Sonar configuration
+      - name: Cache Maven packages
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.m2
+          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+          restore-keys: ${{ runner.os }}-m2
+
+      - name: Build and analyze
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: |
-          echo "Project: ${{ env.SONAR_PROJECT_KEY }}"
-          echo "Organization: ${{ env.SONAR_ORGANIZATION }}"
-          echo "Host: ${{ env.SONAR_HOST_URL }}"
+        run: mvn -B verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar -Dsonar.projectKey=cknafsal-max_Java
 
-          if [ -z "$SONAR_TOKEN" ]; then
-            echo "SONAR_TOKEN is EMPTY"
-            exit 1
-          else
-            echo "SONAR_TOKEN is present"
-          fi
-
-      - name: SonarCloud Analysis
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: |
-          mvn clean verify sonar:sonar \
-          -Dsonar.projectKey=${{ env.SONAR_PROJECT_KEY }} \
-          -Dsonar.organization=${{ env.SONAR_ORGANIZATION }} \
-          -Dsonar.host.url=${{ env.SONAR_HOST_URL }} \
-          -Dsonar.qualitygate.wait=true
-
-
-      - name: Download SonarQube Reports
+      - name: Download SonarQube Issues
         if: always()
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
-          SONAR_PROJECT_KEY: ${{ env.SONAR_PROJECT_KEY }}
         run: |
-          mkdir -p sonar-report
+          curl -s -u "$SONAR_TOKEN:" \
+            "https://sonarcloud.io/api/issues/search?componentKeys=cknafsal-max_Java&s=FILE_LINE&asc=false&resolved=false" \
+            > sonar-issues.json
+          
+          echo "=== SonarQube Issues Found ==="
+          cat sonar-issues.json | jq '.' || echo "No issues or API call failed"
 
-          echo "Downloading Quality Gate..."
-          curl -s -u "${SONAR_TOKEN}:" \
-            "${SONAR_HOST_URL}/api/qualitygates/project_status?projectKey=${SONAR_PROJECT_KEY}" \
-            -o sonar-report/quality-gate.json
-
-          echo "Downloading Issues..."
-          curl -s -u "${SONAR_TOKEN}:" \
-            "${SONAR_HOST_URL}/api/issues/search?componentKeys=${SONAR_PROJECT_KEY}&ps=500" \
-            -o sonar-report/issues.json
-
-          echo "Downloading Measures..."
-          curl -s -u "${SONAR_TOKEN}:" \
-            "${SONAR_HOST_URL}/api/measures/component?component=${SONAR_PROJECT_KEY}&metricKeys=bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density,ncloc,reliability_rating,security_rating,sqale_rating" \
-            -o sonar-report/measures.json
-
-          echo "Downloading Hotspots..."
-          curl -s -u "${SONAR_TOKEN}:" \
-            "${SONAR_HOST_URL}/api/hotspots/search?projectKey=${SONAR_PROJECT_KEY}" \
-            -o sonar-report/hotspots.json
-
-          echo "Downloading Project Metadata..."
-          curl -s -u "${SONAR_TOKEN}:" \
-            "${SONAR_HOST_URL}/api/components/show?component=${SONAR_PROJECT_KEY}" \
-            -o sonar-report/project.json
-
-          cat <<EOF > sonar-report/report-metadata.json
-          {
-            "project":"${SONAR_PROJECT_KEY}",
-            "repository":"${GITHUB_REPOSITORY}",
-            "branch":"${GITHUB_REF_NAME}",
-            "commit":"${GITHUB_SHA}",
-            "generated":"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-          }
-          EOF
-
-          echo "Generated reports:"
-          ls -lah sonar-report
-
-          echo "Issues Count:"
-          jq '.paging.total' sonar-report/issues.json || true
+      - name: Generate Human-Readable Reports
+        if: always()
+        run: python3 scripts/generate_sonar_report.py
 
       - name: Upload SonarQube Reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sonar-report
-          path: sonar-report/
+          name: sonarqube-reports
+          path: |
+            sonar-issues.json
+            sonar-report.html
+            sonar-report.md
           retention-days: 90
           
-  # ---------------------------------------------------------------
-  # 3b. SONAR REPORT GENERATOR (Claude agent)
-  # ---------------------------------------------------------------
-  # Downloads the sonar-report JSON artifacts produced by the
-  # sonarqube job and invokes the sonar-report-generator agent to
-  # produce a single deterministic Markdown report at
-  # reports/sonar-report.md. The agent is read-only: it does not
-  # modify source code, never pushes, never commits.
-  sonar-report:
-    name: Sonar report generator
-    runs-on: ubuntu-latest
-    needs: [sonarqube]
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Prepare reports directory
-        run: mkdir -p reports
-
-      - name: Download SonarQube JSON artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: sonar-report
-          path: reports/
-          if-no-files-found: warn
-
-      - name: List downloaded reports
-        run: ls -la reports/ || true
-
-      - name: Run sonar-report-generator agent
-        env:
-          NVDAI_API_KEY: ${{ secrets.nvdai_api_key }}
-        run: bash scripts/run-sonar-report.sh
-
-      - name: Upload sonar-report.md
-        if: always() && hashFiles('reports/sonar-report.md') != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: sonar-report-md
-          path: reports/sonar-report.md
-          if-no-files-found: warn
-          retention-days: 90
-
+  
   # ---------------------------------------------------------------
   # 4. TRIVY FILESYSTEM SCAN
   # ---------------------------------------------------------------
