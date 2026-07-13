@@ -62,7 +62,7 @@ INPUTS (already on disk under reports/):
                          - Security Hotspots
                          - Code Smells
                          - Rule IDs, severity, file paths, line numbers,
-                           descriptions, and (when available) Sonar's
+                           descriptions, and (when available) Sonar'\''s
                            suggested remediation.
                        Treat sonar.md as the authoritative SonarQube
                        report. Parse the Markdown directly.
