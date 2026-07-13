@@ -380,22 +380,40 @@ jobs:
             org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
 
   # ---------------------------------------------------------------
-  # 9. AUTO-REMEDIATE (Claude agent)
+  # 9. AI AUTO-REMEDIATION (NVIDIA)
   # ---------------------------------------------------------------
-  # Runs the sonar-trivy-remediator agent against the merged Trivy fs
-  # + image SARIF reports and the upstream SonarQube Markdown report
-  # (reports/sonar.md, produced by the sonarqube job). The agent
-  # only modifies files in the working tree; nothing is pushed or
-  # committed by this job.
-  auto-remediate:
-    name: Sonar-Trivy auto-remediate
+  # Calls scripts/ai-remediation.py, which prompts the NVIDIA-hosted
+  # LLM with the upstream Trivy fs + image SARIF reports and the
+  # SonarQube Markdown report, extracts a fenced ```diff block from
+  # the response, validates it with `git apply --check`, applies it,
+  # runs `mvn package`, and on success commits and pushes the fixes
+  # back to the trigger branch.
+  #
+  # The re-trigger guard (if:) checks the head commit's message for
+  # the [ai-remediation] trailer that the script adds to every
+  # auto-commit. That breaks the loop: when the AI pushes a commit
+  # back, the next workflow run sees its own trailer and skips this
+  # job, so the AI never recursively re-applies itself.
+  ai-remediate:
+    name: AI auto-remediation
     runs-on: ubuntu-latest
     needs: [trivy-fs, trivy-image, sonarqube]
+    if: |
+      !contains(github.event.head_commit.message, '[ai-remediation]') &&
+      !contains(github.event.pull_request.head_commit.message, '[ai-remediation]')
     permissions:
-      contents: read
+      contents: write
     steps:
+      # For `pull_request` events the default checkout is a temporary
+      # merge ref (refs/pull/N/merge), which is not the actual PR head
+      # and can't be pushed back to. Force a checkout of the trigger
+      # ref so `git push origin <branch>` works.
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Prepare reports directory
         run: mkdir -p reports
@@ -447,33 +465,30 @@ jobs:
           java-version: '17'
           cache: maven
 
-      - name: Run auto-remediation agent
+      - name: Run AI remediation agent
         env:
           NVDAI_API_KEY: ${{ secrets.nvdai_api_key }}
-        run: bash scripts/run-agent.sh
-
-      - name: Upload auto-remediation report
-        if: always() && hashFiles('reports/auto-remediation-report.md') != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: auto-remediation-report
-          path: reports/auto-remediation-report.md
-          if-no-files-found: warn
-          retention-days: 90
-
-      - name: Upload working-tree patch
-        if: always()
+          BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git diff --stat > reports/git-diff-stat.txt || true
-          git diff       > reports/git-diff.patch       || true
-        shell: bash
+          set -euo pipefail
+          python3 scripts/ai-remediation.py \
+            --repo-root . \
+            --reports  reports \
+            --branch   "${BRANCH}"
 
-      - name: Upload patch artifact
-        if: always() && hashFiles('reports/git-diff.patch') != ''
+      - name: Upload remediation artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: auto-remediation-patch
-          path: reports/git-diff.patch
+          name: ai-remediation
+          path: |
+            reports/ai-remediation-report.md
+            reports/ai-patch.diff
+            reports/ai-remediation.json
+            reports/changed-files.txt
+            reports/llm-prompt.txt
+            reports/llm-response.txt
           if-no-files-found: warn
           retention-days: 90
 
