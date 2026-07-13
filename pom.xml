@@ -29,6 +29,10 @@
         <jacoco.version>0.8.12</jacoco.version>
     </properties>
 
+    <properties>
+        <sonar.organization>hariom6123</sonar.organization>
+    </properties>
+
     <dependencies>
         <!-- Spring Boot Web -->
         <dependency>
