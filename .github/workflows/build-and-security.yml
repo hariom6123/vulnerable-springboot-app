@@ -94,6 +94,9 @@ jobs:
   # ---------------------------------------------------------------
   # 3. SONARQUBE CLOUD STATIC ANALYSIS
   # ---------------------------------------------------------------
+    # ---------------------------------------------------------------
+  # 3. SONARQUBE CLOUD STATIC ANALYSIS
+  # ---------------------------------------------------------------
   sonarqube:
     name: SonarQube Cloud analysis
     runs-on: ubuntu-latest
@@ -203,7 +206,7 @@ jobs:
           name: sonar-report
           path: sonar-report/
           retention-days: 90
-
+          
   # ---------------------------------------------------------------
   # 3b. SONAR REPORT GENERATOR (Claude agent)
   # ---------------------------------------------------------------
