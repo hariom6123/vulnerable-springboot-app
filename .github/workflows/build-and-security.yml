@@ -27,7 +27,7 @@ permissions:
 env:
   SONAR_HOST_URL: https://sonarcloud.io
   SONAR_PROJECT_KEY: hariom6123_vulnerable-springboot-app
-  SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
+  SONAR_ORGANIZATION: hariom6123
   
 
 jobs:
