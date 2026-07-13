@@ -234,14 +234,6 @@ function normalizeMetadata(j) {
     measures:      normalizeMeasures(raws.measures),
     issues:        normalizeIssues(raws.issues),
     hotspots:      normalizeHotspots(raws.hotspots),
-    sources: {
-      issues:      pathMap.issues,
-      qualityGate: pathMap.qualityGate,
-      measures:    pathMap.measures,
-      hotspots:    pathMap.hotspots,
-      project:     pathMap.project,
-      metadata:    pathMap.metadata,
-    },
   };
 
   process.stdout.write(JSON.stringify(out, null, 2));

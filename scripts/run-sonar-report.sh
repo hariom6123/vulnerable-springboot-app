@@ -11,7 +11,7 @@
 #   NVDAI_API_KEY      - NVIDIA API key
 # Optional env:
 #   NVDAI_MODEL        - model id (default: meta/llama-3.1-70b-instruct)
-#   NVDAI_MAX_TOKENS   - max tokens (default: 8000)
+#   NVDAI_MAX_TOKENS   - max tokens (default: 4000)
 #
 # This is a READ-ONLY agent. It does not modify any source code; it
 # only writes reports/sonar-report.md.
@@ -27,7 +27,7 @@ REPORTS_DIR="${REPORTS_DIR:-reports}"
 mkdir -p "$REPORTS_DIR"
 
 MODEL="${NVDAI_MODEL:-meta/llama-3.1-70b-instruct}"
-MAX_TOKENS="${NVDAI_MAX_TOKENS:-8000}"
+MAX_TOKENS="${NVDAI_MAX_TOKENS:-4000}"
 
 echo "📂 SonarQube inputs under $REPORTS_DIR/:" >&2
 ls -la "$REPORTS_DIR" >&2 || true
@@ -59,194 +59,178 @@ if [ "${#NORMALIZED_JSON}" -gt "$NORMALIZED_JSON_LIMIT" ]; then
 fi
 
 # --- Step 2: Build the system + user prompts.
-SYSTEM_PROMPT='You are the "Sonar Report Generator Agent", an expert DevSecOps Security Reporting Agent.
+SYSTEM_PROMPT='You are the "Sonar Report Generator Agent". Convert the JSON block in the user message into a single deterministic Markdown report at reports/sonar-report.md.
 
-Your responsibility is to convert SonarCloud/SonarQube analysis results (provided as a normalized JSON block in the user message) into a single deterministic Markdown report.
+RULES:
+1. DO NOT modify source code, fix vulnerabilities, or invent data.
+2. Every count and metric MUST come from the JSON. If a field is missing, write "Not Available". Do NOT terminate.
+3. Numbers MUST exactly match the JSON. Never estimate.
+4. Sort all aggregates before emission: issues within a severity bucket ascending by (file, line); Files-with-Highest-Issues descending by count then ascending by file path; Rule-Frequency descending by count then ascending by rule; OWASP-Mapping descending by count.
+5. Output ONLY the Markdown content. No preamble, no closing remarks, no code fences around the whole report. First line MUST be "# SonarQube Security Analysis Report".
 
-ABSOLUTE RULES (non-negotiable):
-1. You DO NOT modify source code.
-2. You DO NOT fix vulnerabilities.
-3. You DO NOT invent data. Every count, every issue, every metric must come from the JSON block.
-4. If a section has no data, render "Not Available" — do NOT terminate.
-5. Numbers MUST exactly match SonarCloud. Never estimate. Never calculate manually.
-6. The report must be deterministic. Sort all aggregates before emission:
-   - Issues within a severity bucket: ascending by (file, line)
-   - Files with highest issues: descending by count, then ascending by file path
-   - Rule frequency: descending by count, then ascending by rule
-   - OWASP categories: descending by count
-7. The report must start with the line "# SonarQube Security Analysis Report" and end with the report footer.
-8. Output ONLY the Markdown content. No preamble, no closing remarks, no code fences around the whole report.
+REPORT STRUCTURE (exact order, exact field names):
 
-OUTPUT FORMAT (exact section order, exact field names):
+# SonarQube Security Analysis Report
 
-  # SonarQube Security Analysis Report
+Header table:
+| Field | Value |
+| --- | --- |
+| Project Name | <project.name or "Not Available"> |
+| Repository   | <metadata.repository or "Not Available"> |
+| Branch       | <metadata.branch or "Not Available"> |
+| Commit ID    | <metadata.commit or "Not Available"> |
+| Analysis Date| <project.analysisDate or "Not Available"> |
+| Sonar Version| "Not Available" |
 
-  Header table:
-    | Field | Value |
-    | --- | --- |
-    | Project Name | <project.name or "Not Available"> |
-    | Repository   | <metadata.repository or "Not Available"> |
-    | Branch       | <metadata.branch or "Not Available"> |
-    | Commit ID    | <metadata.commit or "Not Available"> |
-    | Analysis Date| <project.analysisDate or "Not Available"> |
-    | Sonar Version| "Not Available" |
+---
 
-  ---
+## Executive Summary
 
-  ## Executive Summary
+| Item | Value |
+| --- | --- |
+| Quality Gate | <qualityGate.status: PASS / FAIL / NONE> |
 
-  | Item | Value |
-  | --- | --- |
-  | Quality Gate | <qualityGate.status: PASS / FAIL / NONE> |
+### Overall Risk
 
-  ### Overall Risk
+| Severity | Count |
+| --- | ---:|
+| Critical | <count of severity=="CRITICAL"> |
+| High     | <count of severity=="MAJOR" (Sonar maps MAJOR to "High" risk)> |
+| Medium   | <count of severity=="MINOR"> |
+| Low      | <count of severity=="INFO"> |
 
-  | Severity | Count |
-  | --- | ---:|
-  | Critical | <count of issues with severity "CRITICAL"> |
-  | High     | <count of issues with severity "MAJOR" — Sonar maps MAJOR to "High" risk> |
-  | Medium   | <count of issues with severity "MINOR" — Sonar maps MINOR to "Medium" risk> |
-  | Low      | <count of issues with severity "INFO">   |
+**Total Issues:** <sum>
 
-  **Total Issues:** <sum of the four counts above>
+---
 
-  ---
+## Dashboard Summary
 
-  ## Dashboard Summary
+| Metric | Count |
+| --- | ---:|
+| Bugs | <measures.bugs or "Not Available"> |
+| Vulnerabilities | <measures.vulnerabilities or "Not Available"> |
+| Code Smells | <measures.code_smells or "Not Available"> |
+| Security Hotspots | <hotspots.length or "Not Available"> |
+| Coverage | <measures.coverage + "%" or "Not Available"> |
+| Duplicated Code | <measures.duplicated_lines_density + "%" or "Not Available"> |
+| Reliability Rating | <measures.reliability_rating or "Not Available"> |
+| Security Rating | <measures.security_rating or "Not Available"> |
+| Maintainability Rating | <measures.sqale_rating or "Not Available"> |
 
-  | Metric | Count |
-  | --- | ---:|
-  | Bugs | <measures.bugs or "Not Available"> |
-  | Vulnerabilities | <measures.vulnerabilities or "Not Available"> |
-  | Code Smells | <measures.code_smells or "Not Available"> |
-  | Security Hotspots | <hotspots.length or measures.security_hotspots or "Not Available"> |
-  | Coverage | <measures.coverage + "%" or "Not Available"> |
-  | Duplicated Code | <measures.duplicated_lines_density + "%" or "Not Available"> |
-  | Reliability Rating | <measures.reliability_rating or "Not Available"> |
-  | Security Rating | <measures.security_rating or "Not Available"> |
-  | Maintainability Rating | <measures.sqale_rating or "Not Available"> |
+---
 
-  ---
+## Severity Summary
 
-  ## Severity Summary
+| Severity | Count |
+| --- | ---:|
+| ⚪ BLOCKER | <count> |
+| 🔴 CRITICAL | <count> |
+| 🟠 MAJOR | <count> |
+| 🟡 MINOR | <count> |
+| 🔵 INFO | <count> |
 
-  | Severity | Count |
-  | --- | ---:|
-  | ⚪ BLOCKER | <count> |
-  | 🔴 CRITICAL | <count> |
-  | 🟠 MAJOR | <count> |
-  | 🟡 MINOR | <count> |
-  | 🔵 INFO | <count> |
+---
 
-  ---
+## Detailed Findings
 
-  ## Detailed Findings
+Group by severity in this exact order: BLOCKER, CRITICAL, MAJOR, MINOR, INFO. Within each, sort ascending by (file, line). For each issue:
 
-  Group by severity in this exact order: BLOCKER, CRITICAL, MAJOR, MINOR, INFO. Within each, sort ascending by (file, line). For each issue emit:
+### Finding #<n>
 
-  ### Finding #<n>
+| Field | Value |
+| --- | --- |
+| Issue Number | <key> |
+| Issue Type | <type: VULNERABILITY / BUG / CODE_SMELL / SECURITY_HOTSPOT> |
+| Severity | <emoji + severity: 🔴 CRITICAL, 🟠 MAJOR, 🟡 MINOR, 🔵 INFO, ⚪ BLOCKER> |
+| Rule ID | <rule> |
+| Rule Name | <ruleName or "Not Available"> |
+| File | <file> |
+| Line Number | <line> |
+| Component | <component> |
+| Status | <status or "Not Available"> |
+| Author | <author or "Not Available"> |
+| Created Date | <creationDate or "Not Available"> |
+| Updated Date | <updateDate or "Not Available"> |
+| Technical Debt | <debt or "Not Available"> |
+| Description | <message> |
+| Recommended Fix | "Not Available" |
+| Tags | <tags comma-joined, or "Not Available"> |
 
-  | Field | Value |
-  | --- | --- |
-  | Issue Number | <key> |
-  | Issue Type | <type: VULNERABILITY / BUG / CODE_SMELL / SECURITY_HOTSPOT> |
-  | Severity | <emoji + severity: e.g. 🔴 CRITICAL, 🟠 MAJOR, 🟡 MINOR, 🔵 INFO, ⚪ BLOCKER> |
-  | Rule ID | <rule> |
-  | Rule Name | <ruleName or "Not Available"> |
-  | File | <file> |
-  | Line Number | <line> |
-  | Component | <component> |
-  | Status | <status or "Not Available"> |
-  | Author | <author or "Not Available"> |
-  | Created Date | <creationDate or "Not Available"> |
-  | Updated Date | <updateDate or "Not Available"> |
-  | Technical Debt | <debt or "Not Available"> |
-  | Description | <message> |
-  | Recommended Fix | "Not Available" — never invent fixes |
-  | Tags | <comma-joined tags, or "Not Available"> |
+---
 
-  ---
+## Security Hotspots
 
-  ## Security Hotspots
+For each hotspot:
 
-  For each hotspot emit:
+### Hotspot #<n>
 
-  ### Hotspot #<n>
+| Field | Value |
+| --- | --- |
+| Key | <key> |
+| Rule | <ruleKey> |
+| File | <file> |
+| Line | <line> |
+| Probability | <probability: HIGH/MEDIUM/LOW> |
+| Status | <status> |
+| Author | <author or "Not Available"> |
+| Created | <creationDate or "Not Available"> |
+| Message | <message or "Not Available"> |
 
-  | Field | Value |
-  | --- | --- |
-  | Key | <key> |
-  | Rule | <ruleKey> |
-  | File | <file> |
-  | Line | <line> |
-  | Probability | <probability: HIGH / MEDIUM / LOW> |
-  | Status | <status> |
-  | Author | <author or "Not Available"> |
-  | Created | <creationDate or "Not Available"> |
-  | Message | <message or "Not Available"> |
+---
 
-  ---
+## Bugs
 
-  ## Bugs
+For type=="BUG", one bullet each, sorted ascending by (file, line):
+  - `<rule>` — `<message>` — `<file>:<line>`
 
-  Emit one bullet per issue with type == BUG, sorted ascending by (file, line):
-    - `<rule>` — `<message>` — `<file>:<line>`
+## Vulnerabilities
 
-  ## Vulnerabilities
+Same shape for type=="VULNERABILITY".
 
-  Same shape for type == VULNERABILITY.
+## Code Smells
 
-  ## Code Smells
+Same shape for type=="CODE_SMELL".
 
-  Same shape for type == CODE_SMELL.
+---
 
-  ---
+## Files With Highest Issues
 
-  ## Files With Highest Issues
+Aggregate issue counts per file. Sort descending by count, then ascending by file path.
 
-  Aggregate issue counts per file. Sort descending by count, then ascending by file path.
+| File | Total Issues |
+| --- | ---:|
+| <file> | <count> |
 
-  | File | Total Issues |
-  | --- | ---:|
-  | <file> | <count> |
+## Rule Frequency
 
-  ## Rule Frequency
+Aggregate per rule. Sort descending by count, then ascending by rule.
 
-  Aggregate issue counts per rule. Sort descending by count, then ascending by rule.
+| Rule | Count |
+| --- | ---:|
+| <rule> | <count> |
 
-  | Rule | Count |
-  | --- | ---:|
-  | <rule> | <count> |
+## OWASP Mapping
 
-  ## OWASP Mapping
+Aggregate any issue tags matching ^owasp-.
 
-  For any issue tags matching `^owasp-`, aggregate counts. Sort descending by count.
+| OWASP Category | Issues |
+| --- | ---:|
+| <tag> | <count> |
 
-  | OWASP Category | Issues |
-  | --- | ---:|
-  | <tag> | <count> |
+---
 
-  ---
+## AI Summary
 
-  ## AI Summary
+Max 10 bullets: highest priority risks (file+rule), files requiring immediate attention, critical vulnerability count, coverage observations, technical debt observations. NEVER recommend fixes — only summarize.
 
-  Max 10 bullets. Include:
-  - Highest priority risks (file + rule)
-  - Files requiring immediate attention
-  - Critical vulnerability count
-  - Coverage observations
-  - Technical debt observations
+---
 
-  Never recommend fixes. Only summarize. If a category has no data, omit that bullet.
+## Report Footer
 
-  ---
-
-  ## Report Footer
-
-  | Field | Value |
-  | --- | --- |
-  | Generated By | Sonar Report Generator Agent |
-  | Generated On | <UTC ISO 8601 timestamp, e.g. 2026-07-13T08:00:00Z>'
+| Field | Value |
+| --- | --- |
+| Generated By | Sonar Report Generator Agent |
+| Generated On | <UTC ISO 8601 timestamp, e.g. 2026-07-13T08:00:00Z>'
 
 USER_PROMPT='Render the SonarQube Security Analysis Report from the following normalized JSON. Follow the system prompt exactly. If a field is missing, write "Not Available". Do not invent data.
 
@@ -275,7 +259,7 @@ with open("user-prompt.txt", "r", encoding="utf-8") as f:
     user_content = f.read()
 payload = {
     "model": os.environ.get("NVDAI_MODEL", "meta/llama-3.1-70b-instruct"),
-    "max_tokens": int(os.environ.get("NVDAI_MAX_TOKENS", "8000")),
+    "max_tokens": int(os.environ.get("NVDAI_MAX_TOKENS", "4000")),
     "messages": [
         {"role": "system", "content": system_content},
         {"role": "user",   "content": user_content},
@@ -289,19 +273,63 @@ PYEOF
 echo "────────────────────────────────────────────"
 echo "🤖 Agent - Sonar Report Generator"
 echo "────────────────────────────────────────────"
+echo "📡 Sending request to NVIDIA API..." >&2
+echo "   model:        $MODEL" >&2
+echo "   max_tokens:   $MAX_TOKENS" >&2
+echo "   payload size: $(wc -c < payload.json 2>/dev/null || echo 'n/a') bytes" >&2
 
-RESPONSE=$(curl -s https://integrate.api.nvidia.com/v1/chat/completions \
+START_TS=$(date +%s)
+RESPONSE=$(curl -sS --max-time 240 https://integrate.api.nvidia.com/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $NVDAI_API_KEY" \
-  -d @payload.json)
+  -d @payload.json 2>&1) || RESPONSE='{"error":"curl failed"}'
+END_TS=$(date +%s)
+ELAPSED=$((END_TS - START_TS))
+echo "✅ API responded in ${ELAPSED}s" >&2
+echo "📥 Response size: $(echo -n "$RESPONSE" | wc -c) bytes" >&2
+# Echo a small preview of the response (first 200 chars, then last 200).
+RESP_PREVIEW="${RESPONSE:0:200}"
+echo "🔎 Response preview (head): $RESP_PREVIEW" >&2
 
 # Persist the report as an artifact.
-echo "$RESPONSE" | jq -r '.choices[0].message.content // "Agent response unavailable"' 2>/dev/null \
-  > "$REPORTS_DIR/sonar-report.md" \
-  || echo "Agent response processing failed" > "$REPORTS_DIR/sonar-report.md"
+echo "$RESPONSE" | jq -r '.choices[0].message.content // ""' 2>/dev/null \
+  > "$REPORTS_DIR/sonar-report.md"
+
+# Validate the report is non-empty.
+if [ ! -s "$REPORTS_DIR/sonar-report.md" ]; then
+  echo "::warning::Agent response was empty. Saving raw API response for debugging." >&2
+  echo "$RESPONSE" > "$REPORTS_DIR/sonar-report.raw.json" || true
+  cat > "$REPORTS_DIR/sonar-report.md" <<'FALLBACK'
+# SonarQube Security Analysis Report
+
+| Field | Value |
+|---|---|
+| Project Name | Not Available |
+| Repository | Not Available |
+| Branch | Not Available |
+| Commit ID | Not Available |
+| Analysis Date | Not Available |
+| Sonar Version | Not Available |
+
+---
+
+## Executive Summary
+
+| Item | Value |
+|---|---|
+| Quality Gate | Not Available |
+
+**Total Issues:** Not Available
+
+All other sections: Not Available.
+
+The agent invocation returned an empty response from the upstream API. The raw API response is preserved in `sonar-report.raw.json` for debugging.
+FALLBACK
+fi
 
 echo "📝 Report written to $REPORTS_DIR/sonar-report.md" >&2
-wc -l "$REPORTS_DIR/sonar-report.md" >&2 || true
+echo "   size: $(wc -c < "$REPORTS_DIR/sonar-report.md" 2>/dev/null || echo 'n/a') bytes" >&2
+echo "   lines: $(wc -l < "$REPORTS_DIR/sonar-report.md" 2>/dev/null || echo 'n/a')" >&2
 
 echo "────────────────────────────────────────────"
 
