@@ -27,7 +27,7 @@ permissions:
 env:
   SONAR_HOST_URL: https://sonarcloud.io
   SONAR_PROJECT_KEY: hariom6123_vulnerable-springboot-app
-  SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
+  SONAR_ORGANIZATIONANIZATIONANIZATIONANIZATION: ${{ secrets.SONAR_ORGANIZATIONANIZATIONANIZATIONANIZATION }}
   
 
 jobs:
@@ -132,7 +132,7 @@ jobs:
         run: |
           mvn -B sonar:sonar \
             -Dsonar.projectKey=$SONAR_PROJECT_KEY \
-            -Dsonar.organization=$SONAR_ORG \
+            -Dsonar.organization=$SONAR_ORGANIZATION \
             -Dsonar.host.url=$SONAR_HOST_URL \
             -Dsonar.token=$SONAR_TOKEN \
             -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
@@ -159,15 +159,15 @@ jobs:
           mkdir -p sonar-artifacts
 
           curl -s -u "$SONAR_TOKEN:" \
-            "$SONAR_HOST_URL/api/issues/search?componentKeys=$SONAR_PROJECT_KEY&organization=$SONAR_ORG&types=VULNERABILITY&resolved=false&ps=500" \
+            "$SONAR_HOST_URL/api/issues/search?componentKeys=$SONAR_PROJECT_KEY&organization=$SONAR_ORGANIZATIONANIZATIONANIZATION&types=VULNERABILITY&resolved=false&ps=500" \
             > sonar-artifacts/vulnerabilities.json
 
           curl -s -u "$SONAR_TOKEN:" \
-            "$SONAR_HOST_URL/api/hotspots/search?projectKey=$SONAR_PROJECT_KEY&organization=$SONAR_ORG&status=TO_REVIEW&ps=500" \
+            "$SONAR_HOST_URL/api/hotspots/search?projectKey=$SONAR_PROJECT_KEY&organization=$SONAR_ORGANIZATIONANIZATIONANIZATION&status=TO_REVIEW&ps=500" \
             > sonar-artifacts/hotspots.json
 
           curl -s -u "$SONAR_TOKEN:" \
-            "$SONAR_HOST_URL/api/issues/search?componentKeys=$SONAR_PROJECT_KEY&organization=$SONAR_ORG&types=BUG,CODE_SMELL&resolved=false&ps=500" \
+            "$SONAR_HOST_URL/api/issues/search?componentKeys=$SONAR_PROJECT_KEY&organization=$SONAR_ORGANIZATIONANIZATIONANIZATION&types=BUG,CODE_SMELL&resolved=false&ps=500" \
             > sonar-artifacts/other-issues.json
 
           echo "Vulnerability count: $(jq '.total' sonar-artifacts/vulnerabilities.json)"
