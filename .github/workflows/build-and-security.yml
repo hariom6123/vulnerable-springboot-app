@@ -205,6 +205,51 @@ jobs:
           retention-days: 90
 
   # ---------------------------------------------------------------
+  # 3b. SONAR REPORT GENERATOR (Claude agent)
+  # ---------------------------------------------------------------
+  # Downloads the sonar-report JSON artifacts produced by the
+  # sonarqube job and invokes the sonar-report-generator agent to
+  # produce a single deterministic Markdown report at
+  # reports/sonar-report.md. The agent is read-only: it does not
+  # modify source code, never pushes, never commits.
+  sonar-report:
+    name: Sonar report generator
+    runs-on: ubuntu-latest
+    needs: [sonarqube]
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare reports directory
+        run: mkdir -p reports
+
+      - name: Download SonarQube JSON artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: sonar-report
+          path: reports/
+          if-no-files-found: warn
+
+      - name: List downloaded reports
+        run: ls -la reports/ || true
+
+      - name: Run sonar-report-generator agent
+        env:
+          NVDAI_API_KEY: ${{ secrets.nvdai_api_key }}
+        run: bash scripts/run-sonar-report.sh
+
+      - name: Upload sonar-report.md
+        if: always() && hashFiles('reports/sonar-report.md') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonar-report-md
+          path: reports/sonar-report.md
+          if-no-files-found: warn
+          retention-days: 90
+
+  # ---------------------------------------------------------------
   # 4. TRIVY FILESYSTEM SCAN
   # ---------------------------------------------------------------
   trivy-fs:

@@ -8,8 +8,12 @@ on the **currently checked-out branch** in a GitHub Actions runner.
 | File | Purpose |
 |---|---|
 | `.claude/agents/sonar-trivy-remediator.md` | Agent definition (system prompt, behavior spec, tool list) |
+| `.claude/agents/sonar-report-generator.md` | Read-only agent that converts SonarQube JSON artifacts into `reports/sonar-report.md` |
 | `scripts/parse-reports.mjs` | Node.js script that discovers and normalizes SARIF/JSON/XML/HTML/TXT reports into a single JSON list of findings |
+| `scripts/run-agent.sh` | Invokes the auto-remediation agent via the NVIDIA API |
+| `scripts/run-sonar-report.sh` | Invokes the sonar-report-generator agent via the NVIDIA API |
 | `.github/workflows/build-and-security.yml` (job: `auto-remediate`) | Wires the agent into CI: downloads the Trivy fs + image SARIF artifacts, fetches the SonarQube issues JSON via API, then invokes the agent |
+| `.github/workflows/build-and-security.yml` (job: `sonar-report`) | Wires the sonar-report-generator agent into CI: downloads the `sonar-report` artifact, then runs the agent to produce `reports/sonar-report.md` |
 
 ## How it works
 
