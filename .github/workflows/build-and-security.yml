@@ -129,7 +129,7 @@ jobs:
           -Dsonar.organization=${{ env.SONAR_ORGANIZATION }} \
           -Dsonar.host.url=${{ env.SONAR_HOST_URL }} \
           -Dsonar.token=${SONAR_TOKEN} \
-          -Dsonar.sources=src/main/java \
+          -Dsonar.qualitygate.wait=true
 
 
       - name: Download SonarQube Reports
