@@ -120,6 +120,19 @@ jobs:
         if: always()
         run: mvn -B -ntp -Pcoverage verify
 
+      - name: Verify Sonar configuration
+        run: |
+          echo "Project: ${{ env.SONAR_PROJECT_KEY }}"
+          echo "Organization: ${{ env.SONAR_ORGANIZATION }}"
+          echo "Host: ${{ env.SONAR_HOST_URL }}"
+
+          if [ -z "${{ secrets.SONAR_TOKEN }}" ]; then
+            echo "SONAR_TOKEN is EMPTY"
+            exit 1
+          else
+            echo "SONAR_TOKEN is present"
+          fi
+
       - name: SonarCloud Analysis
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
