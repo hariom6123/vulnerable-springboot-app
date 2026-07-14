@@ -14,7 +14,7 @@ name: Build & Security
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, feature-**]
   pull_request:
     branches: [main, master]
   workflow_dispatch:
@@ -24,10 +24,7 @@ permissions:
   contents: read
 
 # Shared env (e.g. SONAR_HOST_URL) is read by jobs that need it.
-env:
-  SONAR_HOST_URL: https://sonarcloud.io
-  SONAR_PROJECT_KEY: hariom6123_vulnerable-springboot-app
-  SONAR_ORGANIZATIONANIZATIONANIZATIONANIZATION: ${{ secrets.SONAR_ORGANIZATIONANIZATIONANIZATIONANIZATION }}
+
   
 
 jobs:
@@ -94,108 +91,75 @@ jobs:
   # ---------------------------------------------------------------
   # 3. SONARQUBE CLOUD STATIC ANALYSIS
   # ---------------------------------------------------------------
-  SonarQube-Cloud-Static-Analysis:
-    name: SonarQube Cloud static analysis
+
+  sonarqube:
+    name: Sonarqube Cloud Analysis
+    needs: [unit-tests]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-         fetch-depth: 0   # needed for Sonar's PR/branch analysis + blame info
+          fetch-depth: 0
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
         with:
-          distribution: temurin
-          java-version: '21'
+          java-version: 17
+          distribution: 'zulu'
 
-      - name: Cache Maven packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.m2/repository
-          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
-          restore-keys: ${{ runner.os }}-m2-
-
-      - name: Cache Sonar packages
-        uses: actions/cache@v4
+      - name: Cache SonarQube packages
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.sonar/cache
           key: ${{ runner.os }}-sonar
           restore-keys: ${{ runner.os }}-sonar
 
-      - name: Build + test + coverage
-        run: mvn -B clean verify -Dmaven.test.failure.ignore=false
-
-      - name: SonarCloud Scan
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: |
-          mvn -B sonar:sonar \
-            -Dsonar.projectKey=$SONAR_PROJECT_KEY \
-            -Dsonar.organization=$SONAR_ORGANIZATION \
-            -Dsonar.host.url=$SONAR_HOST_URL \
-            -Dsonar.token=$SONAR_TOKEN \
-            -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
-            -Dsonar.java.binaries=target/classes
-
-      - name: Fetch vulnerability report
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: |
-          set -e
-          REPORT_FILE=$(find . -name "report-task.txt" -path "*/target/*" | head -1)
-          TASK_ID=$(grep ceTaskId= "$REPORT_FILE" | cut -d= -f2)
-
-          echo "Polling CE task $TASK_ID..."
-          for i in $(seq 1 30); do
-            STATUS=$(curl -s -u "$SONAR_TOKEN:" \
-              "$SONAR_HOST_URL/api/ce/task?id=$TASK_ID" | jq -r .task.status)
-            echo "Status: $STATUS"
-            [ "$STATUS" = "SUCCESS" ] && break
-            [ "$STATUS" = "FAILED" ] && { echo "Analysis failed"; exit 1; }
-            sleep 5
-          done
-
-          mkdir -p sonar-artifacts
-
-          curl -s -u "$SONAR_TOKEN:" \
-            "$SONAR_HOST_URL/api/issues/search?componentKeys=$SONAR_PROJECT_KEY&organization=$SONAR_ORGANIZATIONANIZATIONANIZATION&types=VULNERABILITY&resolved=false&ps=500" \
-            > sonar-artifacts/vulnerabilities.json
-
-          curl -s -u "$SONAR_TOKEN:" \
-            "$SONAR_HOST_URL/api/hotspots/search?projectKey=$SONAR_PROJECT_KEY&organization=$SONAR_ORGANIZATIONANIZATIONANIZATION&status=TO_REVIEW&ps=500" \
-            > sonar-artifacts/hotspots.json
-
-          curl -s -u "$SONAR_TOKEN:" \
-            "$SONAR_HOST_URL/api/issues/search?componentKeys=$SONAR_PROJECT_KEY&organization=$SONAR_ORGANIZATIONANIZATIONANIZATION&types=BUG,CODE_SMELL&resolved=false&ps=500" \
-            > sonar-artifacts/other-issues.json
-
-          echo "Vulnerability count: $(jq '.total' sonar-artifacts/vulnerabilities.json)"
-
-      - name: Check Quality Gate
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: |
-          STATUS=$(curl -s -u "$SONAR_TOKEN:" \
-            "$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=$SONAR_PROJECT_KEY" \
-            | jq -r .projectStatus.status)
-          echo "Quality Gate: $STATUS"
-          echo "quality_gate_status=$STATUS" >> "$GITHUB_ENV"
-          # Leave non-blocking so remediation always runs:
-          # [ "$STATUS" = "ERROR" ] && exit 1
-
-      - uses: actions/upload-artifact@v4
+      - name: Cache Maven packages
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
-          name: sonar-report
-          path: sonar-artifacts/
-          retention-days: 30  
+          path: ~/.m2
+          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+          restore-keys: ${{ runner.os }}-m2
+
+      - name: Build and analyze
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: mvn -B verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar -Dsonar.projectKey=hariom6123_vulnerable-springboot-app
+
+      - name: Download SonarQube Issues
+        if: always()
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          curl -s -u "$SONAR_TOKEN:" \
+            "https://sonarcloud.io/api/issues/search?componentKeys=hariom6123_vulnerable-springboot-app&s=FILE_LINE&asc=false&resolved=false" \
+            > sonar-issues.json
+
+          echo "=== SonarQube Issues Found ==="
+          cat sonar-issues.json | jq '.' || echo "No issues or API call failed"
+
+      - name: Generate Human-Readable Reports
+        if: always()
+        run: python3 scripts/generate_sonar_report.py
+
+      - name: Upload SonarQube Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonarqube-reports
+          path: |
+            sonar-issues.json
+            sonar-report.html
+            sonar-report.md
+          retention-days: 90
+
   # ---------------------------------------------------------------
   # 4. TRIVY FILESYSTEM SCAN
   # ---------------------------------------------------------------
   trivy-fs:
     name: Trivy filesystem scan
     runs-on: ubuntu-latest
-    needs: [SonarQube-Cloud-Static-Analysis]
+    needs: [sonarqube]
     permissions:
       contents: read
       security-events: write
@@ -416,21 +380,40 @@ jobs:
             org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
 
   # ---------------------------------------------------------------
-  # 9. AUTO-REMEDIATE (Claude agent)
+  # 9. AI AUTO-REMEDIATION (NVIDIA)
   # ---------------------------------------------------------------
-  # Runs the sonar-trivy-remediator agent against the merged Trivy fs
-  # + image SARIF reports (and the SonarQube generic-issue JSON, when
-  # SONAR_TOKEN is present). The agent only modifies files in the
-  # working tree; nothing is pushed or committed by this job.
-  auto-remediate:
-    name: Sonar-Trivy auto-remediate
+  # Calls scripts/ai-remediation.py, which prompts the NVIDIA-hosted
+  # LLM with the upstream Trivy fs + image SARIF reports and the
+  # SonarQube Markdown report, extracts a fenced ```diff block from
+  # the response, validates it with `git apply --check`, applies it,
+  # runs `mvn package`, and on success commits and pushes the fixes
+  # back to the trigger branch.
+  #
+  # The re-trigger guard (if:) checks the head commit's message for
+  # the [ai-remediation] trailer that the script adds to every
+  # auto-commit. That breaks the loop: when the AI pushes a commit
+  # back, the next workflow run sees its own trailer and skips this
+  # job, so the AI never recursively re-applies itself.
+  ai-remediate:
+    name: AI auto-remediation
     runs-on: ubuntu-latest
-    needs: [trivy-fs, trivy-image]
+    needs: [trivy-fs, trivy-image, sonarqube]
+    if: |
+      !contains(github.event.head_commit.message, '[ai-remediation]') &&
+      !contains(github.event.pull_request.title, '[ai-remediation]')
     permissions:
-      contents: read
+      contents: write
     steps:
+      # For `pull_request` events the default checkout is a temporary
+      # merge ref (refs/pull/N/merge), which is not the actual PR head
+      # and can't be pushed back to. Force a checkout of the trigger
+      # ref so `git push origin <branch>` works.
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Prepare reports directory
         run: mkdir -p reports
@@ -440,18 +423,20 @@ jobs:
         with:
           name: trivy-fs-report
           path: reports/
-          if-no-files-found: warn
-          retention-days: 90
 
       - name: Download Trivy image SARIF
         uses: actions/download-artifact@v4
         with:
           name: trivy-image-report
           path: reports/
-          if-no-files-found: warn
-          retention-days: 90
 
-      - name: Normalize Trivy SARIF filenames
+      - name: Download SonarQube Markdown report
+        uses: actions/download-artifact@v4
+        with:
+          name: sonarqube-reports
+          path: reports/
+
+      - name: Normalize report filenames
         run: |
           set -e
           # The artifacts are downloaded to reports/<artifactName>/, but the
@@ -462,20 +447,10 @@ jobs:
           if [ -f reports/trivy-image-report/trivy-image.sarif ] && [ ! -f reports/trivy-image.sarif ]; then
             cp reports/trivy-image-report/trivy-image.sarif reports/trivy-image.sarif
           fi
+          if [ -f reports/sonarqube-reports/sonar-report.md ] && [ ! -f reports/sonar.md ]; then
+            cp reports/sonarqube-reports/sonar-report.md reports/sonar.md
+          fi
           ls -la reports/ || true
-
-      - name: Fetch SonarQube issues JSON
-        if: env.SONAR_TOKEN != '' && env.SONAR_HOST_URL != '' && env.SONAR_PROJECT_KEY != ''
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
-          SONAR_PROJECT_KEY: ${{ env.SONAR_PROJECT_KEY }}
-        run: |
-          set -e
-          curl -fsSL -u "${SONAR_TOKEN}:" \
-            "${SONAR_HOST_URL}/api/issues/search?projectKeys=${SONAR_PROJECT_KEY}&types=VULNERABILITY,CODE_SMELL,BUG,SECURITY_HOTSPOT&ps=500&p=1" \
-            -o reports/sonar-report.json || \
-            echo "::warning::Failed to fetch SonarQube report; agent will proceed without it."
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -484,32 +459,134 @@ jobs:
           java-version: '17'
           cache: maven
 
-      - name: Run auto-remediation agent
+      - name: Run AI remediation agent
         env:
           NVDAI_API_KEY: ${{ secrets.nvdai_api_key }}
-        run: bash scripts/run-agent.sh
+        run: bash scripts/run-fix-agent.sh
 
-      - name: Upload auto-remediation report
-        if: always() && hashFiles('reports/auto-remediation-report.md') != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: auto-remediation-report
-          path: reports/auto-remediation-report.md
-          if-no-files-found: warn
-          retention-days: 90
+        # env:
+        #   NVDAI_API_KEY: ${{ secrets.nvdai_api_key }}
+        #   BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+        #   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # run: |
+        #   run: bash scripts/run-fix-agent.sh
 
-      - name: Upload working-tree patch
+          # set -euo pipefail
+          # python3 scripts/ai-remediation.py \
+          #   --repo-root . \
+          #   --reports  reports \
+          #   --branch   "${BRANCH}"
+
+      - name: Upload remediation artifacts
         if: always()
-        run: |
-          git diff --stat > reports/git-diff-stat.txt || true
-          git diff       > reports/git-diff.patch       || true
-        shell: bash
-
-      - name: Upload patch artifact
-        if: always() && hashFiles('reports/git-diff.patch') != ''
         uses: actions/upload-artifact@v4
         with:
-          name: auto-remediation-patch
-          path: reports/git-diff.patch
+          name: ai-remediation
+          path: |
+            reports/ai-remediation-report.md
+            reports/ai-patch.diff
+            reports/ai-remediation.json
+            reports/changed-files.txt
+            reports/llm-prompt.txt
+            reports/llm-response.txt
           if-no-files-found: warn
           retention-days: 90
+
+  # ai-remediate:
+  #   name: AI auto-remediation
+  #   runs-on: ubuntu-latest
+  #   needs: [trivy-fs, trivy-image, sonarqube]
+  #   if: |
+  #     !contains(github.event.head_commit.message, '[ai-remediation]') &&
+  #     !contains(github.event.pull_request.head_commit.message, '[ai-remediation]')
+  #   permissions:
+  #     contents: write
+  #   steps:
+  #     # For `pull_request` events the default checkout is a temporary
+  #     # merge ref (refs/pull/N/merge), which is not the actual PR head
+  #     # and can't be pushed back to. Force a checkout of the trigger
+  #     # ref so `git push origin <branch>` works.
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
+  #       with:
+  #         ref: ${{ github.event.pull_request.head.ref || github.ref }}
+  #         fetch-depth: 0
+  #         token: ${{ secrets.GITHUB_TOKEN }}
+
+  #     - name: Prepare reports directory
+  #       run: mkdir -p reports
+
+  #     - name: Download Trivy filesystem SARIF
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: trivy-fs-report
+  #         path: reports/
+  #         if-no-files-found: warn
+  #         retention-days: 90
+
+  #     - name: Download Trivy image SARIF
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: trivy-image-report
+  #         path: reports/
+  #         if-no-files-found: warn
+  #         retention-days: 90
+
+  #     - name: Download SonarQube Markdown report
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: sonarqube-reports
+  #         path: reports/
+  #         if-no-files-found: warn
+  #         retention-days: 90
+
+  #     - name: Normalize report filenames
+  #       run: |
+  #         set -e
+  #         # The artifacts are downloaded to reports/<artifactName>/, but the
+  #         # agent expects them flat under reports/. Flatten if needed.
+  #         if [ -f reports/trivy-fs-report/trivy-fs.sarif ] && [ ! -f reports/trivy-fs.sarif ]; then
+  #           cp reports/trivy-fs-report/trivy-fs.sarif reports/trivy-fs.sarif
+  #         fi
+  #         if [ -f reports/trivy-image-report/trivy-image.sarif ] && [ ! -f reports/trivy-image.sarif ]; then
+  #           cp reports/trivy-image-report/trivy-image.sarif reports/trivy-image.sarif
+  #         fi
+  #         if [ -f reports/sonarqube-reports/sonar-report.md ] && [ ! -f reports/sonar.md ]; then
+  #           cp reports/sonarqube-reports/sonar-report.md reports/sonar.md
+  #         fi
+  #         ls -la reports/ || true
+
+  #     - name: Set up JDK 17
+  #       uses: actions/setup-java@v4
+  #       with:
+  #         distribution: temurin
+  #         java-version: '17'
+  #         cache: maven
+
+  #     - name: Run AI remediation agent
+  #       env:
+  #         NVDAI_API_KEY: ${{ secrets.nvdai_api_key }}
+  #         BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+  #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  #       run: |
+  #         set -euo pipefail
+  #         python3 scripts/ai-remediation.py \
+  #           --repo-root . \
+  #           --reports  reports \
+  #           --branch   "${BRANCH}"
+
+  #     - name: Upload remediation artifacts
+  #       if: always()
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: ai-remediation
+  #         path: |
+  #           reports/ai-remediation-report.md
+  #           reports/ai-patch.diff
+  #           reports/ai-remediation.json
+  #           reports/changed-files.txt
+  #           reports/llm-prompt.txt
+  #           reports/llm-response.txt
+  #         if-no-files-found: warn
+  #         retention-days: 90
+

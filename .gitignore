@@ -17,3 +17,6 @@ HELP.md
 !**/src/main/**/target/
 !**/src/test/**/target/
 SECURITY_ASSESSMENT_REPORT.md
+__pycache__/
+*.pyc
+.pytest_cache/
