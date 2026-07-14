@@ -400,7 +400,7 @@ jobs:
     needs: [trivy-fs, trivy-image, sonarqube]
     if: |
       !contains(github.event.head_commit.message, '[ai-remediation]') &&
-      !contains(github.event.pull_request.head_commit.message, '[ai-remediation]')
+      !contains(github.event.pull_request.title, '[ai-remediation]')
     permissions:
       contents: write
     steps:
@@ -423,24 +423,18 @@ jobs:
         with:
           name: trivy-fs-report
           path: reports/
-          if-no-files-found: warn
-          retention-days: 90
 
       - name: Download Trivy image SARIF
         uses: actions/download-artifact@v4
         with:
           name: trivy-image-report
           path: reports/
-          if-no-files-found: warn
-          retention-days: 90
 
       - name: Download SonarQube Markdown report
         uses: actions/download-artifact@v4
         with:
           name: sonarqube-reports
           path: reports/
-          if-no-files-found: warn
-          retention-days: 90
 
       - name: Normalize report filenames
         run: |
@@ -468,14 +462,20 @@ jobs:
       - name: Run AI remediation agent
         env:
           NVDAI_API_KEY: ${{ secrets.nvdai_api_key }}
-          BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          python3 scripts/ai-remediation.py \
-            --repo-root . \
-            --reports  reports \
-            --branch   "${BRANCH}"
+        run: bash scripts/run-fix-agent.sh
+
+        # env:
+        #   NVDAI_API_KEY: ${{ secrets.nvdai_api_key }}
+        #   BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+        #   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # run: |
+        #   run: bash scripts/run-fix-agent.sh
+
+          # set -euo pipefail
+          # python3 scripts/ai-remediation.py \
+          #   --repo-root . \
+          #   --reports  reports \
+          #   --branch   "${BRANCH}"
 
       - name: Upload remediation artifacts
         if: always()
@@ -491,4 +491,102 @@ jobs:
             reports/llm-response.txt
           if-no-files-found: warn
           retention-days: 90
+
+  # ai-remediate:
+  #   name: AI auto-remediation
+  #   runs-on: ubuntu-latest
+  #   needs: [trivy-fs, trivy-image, sonarqube]
+  #   if: |
+  #     !contains(github.event.head_commit.message, '[ai-remediation]') &&
+  #     !contains(github.event.pull_request.head_commit.message, '[ai-remediation]')
+  #   permissions:
+  #     contents: write
+  #   steps:
+  #     # For `pull_request` events the default checkout is a temporary
+  #     # merge ref (refs/pull/N/merge), which is not the actual PR head
+  #     # and can't be pushed back to. Force a checkout of the trigger
+  #     # ref so `git push origin <branch>` works.
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
+  #       with:
+  #         ref: ${{ github.event.pull_request.head.ref || github.ref }}
+  #         fetch-depth: 0
+  #         token: ${{ secrets.GITHUB_TOKEN }}
+
+  #     - name: Prepare reports directory
+  #       run: mkdir -p reports
+
+  #     - name: Download Trivy filesystem SARIF
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: trivy-fs-report
+  #         path: reports/
+  #         if-no-files-found: warn
+  #         retention-days: 90
+
+  #     - name: Download Trivy image SARIF
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: trivy-image-report
+  #         path: reports/
+  #         if-no-files-found: warn
+  #         retention-days: 90
+
+  #     - name: Download SonarQube Markdown report
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: sonarqube-reports
+  #         path: reports/
+  #         if-no-files-found: warn
+  #         retention-days: 90
+
+  #     - name: Normalize report filenames
+  #       run: |
+  #         set -e
+  #         # The artifacts are downloaded to reports/<artifactName>/, but the
+  #         # agent expects them flat under reports/. Flatten if needed.
+  #         if [ -f reports/trivy-fs-report/trivy-fs.sarif ] && [ ! -f reports/trivy-fs.sarif ]; then
+  #           cp reports/trivy-fs-report/trivy-fs.sarif reports/trivy-fs.sarif
+  #         fi
+  #         if [ -f reports/trivy-image-report/trivy-image.sarif ] && [ ! -f reports/trivy-image.sarif ]; then
+  #           cp reports/trivy-image-report/trivy-image.sarif reports/trivy-image.sarif
+  #         fi
+  #         if [ -f reports/sonarqube-reports/sonar-report.md ] && [ ! -f reports/sonar.md ]; then
+  #           cp reports/sonarqube-reports/sonar-report.md reports/sonar.md
+  #         fi
+  #         ls -la reports/ || true
+
+  #     - name: Set up JDK 17
+  #       uses: actions/setup-java@v4
+  #       with:
+  #         distribution: temurin
+  #         java-version: '17'
+  #         cache: maven
+
+  #     - name: Run AI remediation agent
+  #       env:
+  #         NVDAI_API_KEY: ${{ secrets.nvdai_api_key }}
+  #         BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+  #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  #       run: |
+  #         set -euo pipefail
+  #         python3 scripts/ai-remediation.py \
+  #           --repo-root . \
+  #           --reports  reports \
+  #           --branch   "${BRANCH}"
+
+  #     - name: Upload remediation artifacts
+  #       if: always()
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: ai-remediation
+  #         path: |
+  #           reports/ai-remediation-report.md
+  #           reports/ai-patch.diff
+  #           reports/ai-remediation.json
+  #           reports/changed-files.txt
+  #           reports/llm-prompt.txt
+  #           reports/llm-response.txt
+  #         if-no-files-found: warn
+  #         retention-days: 90
 
